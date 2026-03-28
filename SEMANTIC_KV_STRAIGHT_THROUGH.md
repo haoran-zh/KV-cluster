@@ -51,7 +51,7 @@ $$
 Attention is computed only over the retained live cache:
 
 $$
-\alpha_{t,i}^\ell = \operatorname{softmax}_i
+\alpha_{t,i}^\ell = \mathrm{softmax}_i
 \left(
 \frac{\langle q_t^\ell, K_i^\ell \rangle}{\sqrt{d_h}}
 \right).
