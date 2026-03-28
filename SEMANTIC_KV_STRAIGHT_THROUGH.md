@@ -119,15 +119,15 @@ attends to a hard subset of high-dimensional K/V tokens.
 At greedy step $m$, for the remaining candidates:
 
 $$
-p_i^{(m)} = \operatorname{softmax}(u_i^{(m)} / \tau),
+p_i^{(m)} = \mathrm{softmax}(u_i^{(m)} / \tau),
 $$
 
 $$
-h_i^{(m)} = \operatorname{onehot}\left(\arg\max_i u_i^{(m)}\right),
+h_i^{(m)} = \mathrm{onehot}\left(\arg\max_i u_i^{(m)}\right),
 $$
 
 $$
-z_i^{(m)} = h_i^{(m)} + p_i^{(m)} - \operatorname{stopgrad}(p_i^{(m)}).
+z_i^{(m)} = h_i^{(m)} + p_i^{(m)} - \mathrm{stopgrad}(p_i^{(m)}).
 $$
 
 The selected high-dimensional slot is formed as
@@ -176,20 +176,20 @@ $$
 The regularizer uses soft assignments
 
 $$
-a_{ij} = \operatorname{softmax}_j\left(-\lVert x_i - c_j \rVert_2^2 / T\right),
+a_{ij} = \mathrm{softmax}_j\left(-\lVert x_i - c_j \rVert_2^2 / T\right),
 $$
 
 importance-normalized within-cluster spread
 
 $$
-\operatorname{Within} =
+\mathrm{Within} =
 \sum_i \hat{w}_i \sum_j a_{ij}\lVert x_i - c_j \rVert_2^2,
 $$
 
 and mean pairwise center separation
 
 $$
-\operatorname{Between} =
+\mathrm{Between} =
 \frac{1}{|P|}\sum_{(j,k)\in P}\lVert c_j - c_k \rVert_2^2.
 $$
 
@@ -197,7 +197,7 @@ The loss is
 
 $$
 \mathcal{L}_{\mathrm{cluster}} =
-\frac{\operatorname{Within}}{\operatorname{Between} + \varepsilon}.
+\frac{\mathrm{Within}}{\mathrm{Between} + \varepsilon}.
 $$
 
 ## Training-Time Attention Path
