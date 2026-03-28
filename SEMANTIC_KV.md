@@ -1,4 +1,4 @@
-# Semantic KV Compression Scaffold
+# Semantic KV Compression
 
 This document describes the new `semantic_kv` path added on top of the RLKV codebase.
 
@@ -23,18 +23,22 @@ Implemented now:
 
 - All-head selective KV compression during HF evaluation.
 - Per-layer low-rank projection weights saved to and loaded from `semantic_kv.pt`.
-- AReaL-side trainable projector modules with checkpoint save/load.
-- A clustering regularizer hook added on top of the actor loss.
-- SGLang-side placeholder projector modules so parameter syncing does not immediately break.
+- AReaL-side compressed attention training forward with online cumulative attention importance.
+- Straight-through greedy token selection so the GRPO actor loss can update `W` through the compressed forward path.
+- Cluster regularization over the retained semantic centers at each compression event.
+- SGLang rollout support for the same hard semantic compression policy on the `torch_native` attention backend.
+- Server-side allocator reclamation for semantic-KV rollout via per-request, per-layer slot refcounting.
+- Best-effort AReaL `past_key_value` support by carrying a compacted runtime semantic state across cached decode calls.
 
-Still TODO:
+Remaining limitations:
 
-- Replace the AReaL projector passthrough forward with the real compressed-attention forward.
-- Replace the rollout-side placeholder SGLang integration with a real semantic-KV backend.
-- Use cumulative attention importance from the real cache path during training instead of the current proxy token salience.
-- Make GRPO gradients affect `W` through the actual compression decision, not only through the auxiliary loss.
+- Semantic-KV rollout currently requires `torch_native`, `page_size=1`, `disable_radix_cache=true`, and `disable_overlap_schedule=true`.
+- The rollout backend still approximates importance if it has to reconstruct semantic state after state loss instead of continuing from the live semantic state.
+- AReaL cached decode support is best-effort and assumes stable batch ordering across decode steps.
+- AReaL semantic-KV training still does not support Ulysses sequence parallelism.
+- The explicit online compressed-attention loop is much slower than the optimized dense attention kernels.
 
-Those TODOs are marked inline in code.
+For the exact mathematical formulation of the straight-through implementation, see `SEMANTIC_KV_STRAIGHT_THROUGH.md`.
 
 ## Loss Choice
 
@@ -134,7 +138,9 @@ Start here:
 - `AReaL/areal/engine/fsdp_engine.py`
 - `eval/bench/pred.py`
 
-The two most important TODO markers are in:
+The most important implementation files are:
 
 - `AReaL/areal/semantic_kv/forward.py`
+- `AReaL/areal/semantic_kv/loss.py`
+- `sglang/python/sglang/srt/layers/attention/torch_native_backend.py`
 - `sglang/python/sglang/srt/model_executor/model_runner.py`
