@@ -9,6 +9,10 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 from datasets import load_dataset
+from base.learned_loki_cache import (
+    enable_learned_loki_eval,
+    load_learned_loki_checkpoint,
+)
 from base.patch import enable_duo_attention_eval, enable_h2o_eval, enable_rkv_eval
 from base.semantic_kv_cache import enable_semantic_kv_eval, load_semantic_kv_checkpoint
 from base.tuple_kv_cache import enable_tuple_kv_cache
@@ -149,7 +153,7 @@ def get_pred(
                         is_early_stop = True
                         break
 
-        if method in ["h2o", "rkv", "semantic_kv"]:
+        if method in ["h2o", "rkv", "semantic_kv", "learned_loki"]:
             # H2O method requires clear the cache after each generation
             for layer in model.model.layers:
                 layer.self_attn.kv_sampler.reset()
@@ -286,6 +290,32 @@ def load_model_and_tokenizer(path, model_name):
             sink_size=sink_size,
             recent_size=recent_size,
         )
+    elif args.method == "learned_loki":
+        assert args.attn_load_dir is not None, "attn_load_dir must be provided"
+        checkpoint = load_learned_loki_checkpoint(args.attn_load_dir)
+        default_cfg = checkpoint.get("config", {})
+        sink_size = (
+            args.sink_size
+            if args.sink_size is not None
+            else default_cfg.get("sink_window_size", 16)
+        )
+        recent_size = (
+            args.recent_size
+            if args.recent_size is not None
+            else default_cfg.get("recent_window_size", 64)
+        )
+        budget_ratio = round(1 - args.sparsity, 5)
+        print(
+            f"Loading Learned-Loki checkpoint from {args.attn_load_dir} "
+            f"with budget ratio {budget_ratio}, sink {sink_size}, recent {recent_size}"
+        )
+        enable_learned_loki_eval(
+            model,
+            checkpoint=checkpoint,
+            budget_ratio=budget_ratio,
+            sink_size=sink_size,
+            recent_size=recent_size,
+        )
     else:
         raise ValueError(f"Unknown method: {args.method}")
 
@@ -331,6 +361,8 @@ if __name__ == "__main__":
         out_path = f"{root}/{model_name}/{dataset}-rlkv-{args.attn_load_dir.split('/')[-1]}-sp-{args.sparsity}.jsonl"
     elif args.method == "semantic_kv":
         out_path = f"{root}/{model_name}/{dataset}-semantic_kv-{args.attn_load_dir.split('/')[-1]}-sp-{args.sparsity}.jsonl"
+    elif args.method == "learned_loki":
+        out_path = f"{root}/{model_name}/{dataset}-learned_loki-{args.attn_load_dir.split('/')[-1]}-sp-{args.sparsity}.jsonl"
     if os.path.exists(out_path) and not args.is_rerun:
         print(f"Predictions already exist at {out_path}, skipping...")
         exit(0)
