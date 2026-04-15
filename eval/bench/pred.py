@@ -9,7 +9,10 @@ from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 from datasets import load_dataset
-from base.patch import enable_duo_attention_eval, enable_h2o_eval, enable_rkv_eval
+from base.learned_loki_cache import (
+    enable_learned_loki_eval,
+    load_learned_loki_checkpoint,
+)
 from base.semantic_kv_cache import enable_semantic_kv_eval, load_semantic_kv_checkpoint
 from base.tuple_kv_cache import enable_tuple_kv_cache
 from base.duo_attn.utils import load_attn_pattern, sparsify_attention_heads, to_device
@@ -149,7 +152,7 @@ def get_pred(
                         is_early_stop = True
                         break
 
-        if method in ["h2o", "rkv", "semantic_kv"]:
+        if method in ["h2o", "rkv", "semantic_kv", "learned_loki"]:
             # H2O method requires clear the cache after each generation
             for layer in model.model.layers:
                 layer.self_attn.kv_sampler.reset()
@@ -201,6 +204,8 @@ def load_model_and_tokenizer(path, model_name):
     model = model.eval()
 
     if args.method == "duo_attn":
+        from base.patch import enable_duo_attention_eval
+
         assert args.attn_load_dir is not None, "attn_load_dir must be provided"
         print(
             f"Loading attention pattern from {args.attn_load_dir} with sparsity {args.sparsity}"
@@ -228,14 +233,20 @@ def load_model_and_tokenizer(path, model_name):
     elif args.method == "full":
         enable_tuple_kv_cache(model)
     elif args.method == "h2o":
+        from base.patch import enable_h2o_eval
+
         budget_ratio = round(1 - args.sparsity, 5)
         enable_h2o_eval(
             model, budget_ratio, args.sink_size + args.recent_size
         )  # keep same REAL sparsity as duo_attn
     elif args.method == "rkv":
+        from base.patch import enable_rkv_eval
+
         budget_ratio = round(1 - args.sparsity, 5)
         enable_rkv_eval(model, budget_ratio, args.sink_size + args.recent_size) # keep same REAL sparsity as duo_attn
     elif args.method == "rlkv":
+        from base.patch import enable_duo_attention_eval
+
         assert args.attn_load_dir is not None, "attn_load_dir must be provided"
         print(
             f"Loading attention pattern from {args.attn_load_dir} with sparsity {args.sparsity}"
@@ -280,6 +291,32 @@ def load_model_and_tokenizer(path, model_name):
             f"with budget ratio {budget_ratio}, sink {sink_size}, recent {recent_size}"
         )
         enable_semantic_kv_eval(
+            model,
+            checkpoint=checkpoint,
+            budget_ratio=budget_ratio,
+            sink_size=sink_size,
+            recent_size=recent_size,
+        )
+    elif args.method == "learned_loki":
+        assert args.attn_load_dir is not None, "attn_load_dir must be provided"
+        checkpoint = load_learned_loki_checkpoint(args.attn_load_dir)
+        default_cfg = checkpoint.get("config", {})
+        sink_size = (
+            args.sink_size
+            if args.sink_size is not None
+            else default_cfg.get("sink_window_size", 16)
+        )
+        recent_size = (
+            args.recent_size
+            if args.recent_size is not None
+            else default_cfg.get("recent_window_size", 64)
+        )
+        budget_ratio = round(1 - args.sparsity, 5)
+        print(
+            f"Loading Learned-Loki checkpoint from {args.attn_load_dir} "
+            f"with budget ratio {budget_ratio}, sink {sink_size}, recent {recent_size}"
+        )
+        enable_learned_loki_eval(
             model,
             checkpoint=checkpoint,
             budget_ratio=budget_ratio,
@@ -331,6 +368,8 @@ if __name__ == "__main__":
         out_path = f"{root}/{model_name}/{dataset}-rlkv-{args.attn_load_dir.split('/')[-1]}-sp-{args.sparsity}.jsonl"
     elif args.method == "semantic_kv":
         out_path = f"{root}/{model_name}/{dataset}-semantic_kv-{args.attn_load_dir.split('/')[-1]}-sp-{args.sparsity}.jsonl"
+    elif args.method == "learned_loki":
+        out_path = f"{root}/{model_name}/{dataset}-learned_loki-{args.attn_load_dir.split('/')[-1]}-sp-{args.sparsity}.jsonl"
     if os.path.exists(out_path) and not args.is_rerun:
         print(f"Predictions already exist at {out_path}, skipping...")
         exit(0)
