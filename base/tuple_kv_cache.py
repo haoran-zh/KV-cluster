@@ -3,8 +3,7 @@ from typing import List, Optional, Tuple
 
 import torch
 import torch.functional as F
-from flash_attn import flash_attn_func, flash_attn_varlen_func
-from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input
+import torch.nn.functional as F_nn
 from torch.nn import CrossEntropyLoss
 from transformers.models.llama.modeling_llama import (
     BaseModelOutputWithPast,
@@ -15,6 +14,19 @@ from transformers.models.llama.modeling_llama import (
 )
 from transformers.models.qwen2.modeling_qwen2 import Qwen2ForCausalLM
 from transformers.models.qwen3.modeling_qwen3 import Qwen3ForCausalLM
+
+try:
+    from flash_attn import flash_attn_func, flash_attn_varlen_func
+    from flash_attn.bert_padding import index_first_axis, pad_input, unpad_input
+
+    HAS_FLASH_ATTN = True
+except ImportError:
+    flash_attn_func = None
+    flash_attn_varlen_func = None
+    index_first_axis = None
+    pad_input = None
+    unpad_input = None
+    HAS_FLASH_ATTN = False
 
 
 def _get_unpad_data(attention_mask: torch.Tensor):
@@ -193,9 +205,21 @@ def _flash_attention_forward(
             position of padding tokens and 1 for the position of non-padding tokens.
         dropout (`float`):
             Attention dropout
-        softmax_scale (`float`, *optional*):
-            The scaling of QK^T before applying softmax. Default to 1 / sqrt(head_dim)
+    softmax_scale (`float`, *optional*):
+        The scaling of QK^T before applying softmax. Default to 1 / sqrt(head_dim)
     """
+    if not HAS_FLASH_ATTN:
+        if attention_mask is not None:
+            raise RuntimeError(
+                "flash_attn is required when attention padding masks are present."
+            )
+        return _sdpa_attention_forward(
+            query_states,
+            key_states,
+            value_states,
+            query_length=query_length,
+        )
+
     # Contains at least one padding token in the sequence
     if attention_mask is not None:
         batch_size = query_states.shape[0]
@@ -237,6 +261,46 @@ def _flash_attention_forward(
         )
 
     return attn_output
+
+
+def _sdpa_attention_forward(
+    query_states: torch.Tensor,
+    key_states: torch.Tensor,
+    value_states: torch.Tensor,
+    query_length: int,
+) -> torch.Tensor:
+    num_query_heads = query_states.shape[2]
+    num_key_value_heads = key_states.shape[2]
+    if num_query_heads != num_key_value_heads:
+        assert num_query_heads % num_key_value_heads == 0
+        repeat_factor = num_query_heads // num_key_value_heads
+        key_states = key_states.repeat_interleave(repeat_factor, dim=2)
+        value_states = value_states.repeat_interleave(repeat_factor, dim=2)
+
+    query_states = query_states.transpose(1, 2)
+    key_states = key_states.transpose(1, 2)
+    value_states = value_states.transpose(1, 2)
+
+    kv_length = key_states.shape[2]
+    past_length = kv_length - query_length
+    q_positions = torch.arange(query_length, device=query_states.device) + past_length
+    k_positions = torch.arange(kv_length, device=query_states.device)
+    causal_mask = k_positions.unsqueeze(0) <= q_positions.unsqueeze(1)
+    attn_bias = torch.zeros(
+        (query_length, kv_length),
+        dtype=query_states.dtype,
+        device=query_states.device,
+    )
+    attn_bias.masked_fill_(~causal_mask, torch.finfo(query_states.dtype).min)
+
+    attn_output = F_nn.scaled_dot_product_attention(
+        query_states,
+        key_states,
+        value_states,
+        attn_mask=attn_bias,
+        dropout_p=0.0,
+    )
+    return attn_output.transpose(1, 2)
 
 
 def _upad_input(self, query_layer, key_layer, value_layer, padding_mask, query_length):

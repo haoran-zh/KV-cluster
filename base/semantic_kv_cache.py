@@ -146,6 +146,13 @@ class SemanticKV(BaseSampler):
         self.importance_scores = None
         self.last_cluster_assignment = None
 
+    def _projection_weight_for(self, device: torch.device) -> torch.Tensor:
+        if self.projection_weight.device != device:
+            self.projection_weight = self.projection_weight.to(
+                device=device, dtype=torch.float32
+            )
+        return self.projection_weight
+
     def reset(self):
         super().reset()
         self.importance_scores = None
@@ -153,7 +160,9 @@ class SemanticKV(BaseSampler):
 
     def _project_tokens(self, key_states: torch.Tensor) -> torch.Tensor:
         token_keys = key_states.mean(dim=1)
-        return F.linear(token_keys.float(), self.projection_weight)
+        return F.linear(
+            token_keys.float(), self._projection_weight_for(key_states.device)
+        )
 
     def update_kv(self, key_states, query_states, value_states, attention_mask=None):
         bsz, kv_heads, kv_len, head_dim = key_states.shape

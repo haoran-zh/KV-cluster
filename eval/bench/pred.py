@@ -13,7 +13,6 @@ from base.learned_loki_cache import (
     enable_learned_loki_eval,
     load_learned_loki_checkpoint,
 )
-from base.patch import enable_duo_attention_eval, enable_h2o_eval, enable_rkv_eval
 from base.semantic_kv_cache import enable_semantic_kv_eval, load_semantic_kv_checkpoint
 from base.tuple_kv_cache import enable_tuple_kv_cache
 from base.duo_attn.utils import load_attn_pattern, sparsify_attention_heads, to_device
@@ -205,6 +204,8 @@ def load_model_and_tokenizer(path, model_name):
     model = model.eval()
 
     if args.method == "duo_attn":
+        from base.patch import enable_duo_attention_eval
+
         assert args.attn_load_dir is not None, "attn_load_dir must be provided"
         print(
             f"Loading attention pattern from {args.attn_load_dir} with sparsity {args.sparsity}"
@@ -232,14 +233,20 @@ def load_model_and_tokenizer(path, model_name):
     elif args.method == "full":
         enable_tuple_kv_cache(model)
     elif args.method == "h2o":
+        from base.patch import enable_h2o_eval
+
         budget_ratio = round(1 - args.sparsity, 5)
         enable_h2o_eval(
             model, budget_ratio, args.sink_size + args.recent_size
         )  # keep same REAL sparsity as duo_attn
     elif args.method == "rkv":
+        from base.patch import enable_rkv_eval
+
         budget_ratio = round(1 - args.sparsity, 5)
         enable_rkv_eval(model, budget_ratio, args.sink_size + args.recent_size) # keep same REAL sparsity as duo_attn
     elif args.method == "rlkv":
+        from base.patch import enable_duo_attention_eval
+
         assert args.attn_load_dir is not None, "attn_load_dir must be provided"
         print(
             f"Loading attention pattern from {args.attn_load_dir} with sparsity {args.sparsity}"

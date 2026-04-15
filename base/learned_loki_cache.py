@@ -51,6 +51,13 @@ class LearnedLokiKV(BaseSampler):
         self.num_key_value_groups = num_key_value_groups
         self.projection_weight = projection_weight.float()
 
+    def _projection_weight_for(self, device: torch.device) -> torch.Tensor:
+        if self.projection_weight.device != device:
+            self.projection_weight = self.projection_weight.to(
+                device=device, dtype=torch.float32
+            )
+        return self.projection_weight
+
     @property
     def budget(self):
         protected = self.sink_size + self.recent_size
@@ -63,25 +70,26 @@ class LearnedLokiKV(BaseSampler):
         key_states: torch.Tensor,
         query_states: torch.Tensor,
     ) -> torch.Tensor:
+        projection_weight = self._projection_weight_for(query_states.device)
         projected_query = F.linear(
             query_states[:, :, -1, :].float(),
-            self.projection_weight,
+            projection_weight,
         )
         projected_keys = F.linear(
             key_states.transpose(1, 2).float(),
-            self.projection_weight,
+            projection_weight,
         )
         expanded_projected_keys = repeat_kv(
             projected_keys.transpose(1, 2),
             self.num_key_value_groups,
-        ).transpose(1, 2)
+        )
         approx_scores = (
             torch.einsum(
                 "bhr,bhsr->bhs",
                 projected_query.float(),
                 expanded_projected_keys.float(),
             )
-            / (self.projection_weight.shape[0] ** 0.5)
+            / (projection_weight.shape[0] ** 0.5)
         )
         return approx_scores.mean(dim=1)
 
